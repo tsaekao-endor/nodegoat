@@ -27,6 +27,8 @@ const httpsOptions = {
 };
 */
 
+const API_KEY = 'glpat-prSqvXW9Q_yI9oTz3-s_';
+
 MongoClient.connect(db, (err, db) => {
     if (err) {
         console.log("Error: DB: connect");
