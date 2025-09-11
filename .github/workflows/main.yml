@@ -1,0 +1,24 @@
+name: Endor Labs Scan
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main", "release/*"]
+  pull_request:
+
+jobs:
+  endor-scan:
+    # NOTE -- alter this to point to your fork of this repo!
+    uses: tsaekao-endor/endor-github-workflow/.github/workflows/scan-with-endorlabs.yml@main
+    permissions:
+      id-token: write      # allows authentication to Endor Labs using Actions OIDC JWT Toke
+      issues: write        # allows scanner to publish SARIF, if requested
+      contents: read       # allows this job to clone org repos
+    with:
+      namespace: ${{ vars.ENDOR_NAMESPACE }}  # set this as an org-level variable, preferably
+
+      git-url: "https://github.com/${{ github.repository }}.git"
+      git-branch: ${{ github.ref_name }}
+      upload-sarif: false   # set TRUE to publish SARIF to GitHub; requires public repo or GHAS license; default is false
+      upload-json: true     # upload the scan results as a ZIP of a JSON file; default is false
+      upload-logs: false    # set TRUE to upload the host-check and scan logs as a ZIP; default is false
+      is-pr: ${{ github.event_name == 'pull_request' && true || false }}
