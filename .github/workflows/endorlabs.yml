@@ -22,13 +22,34 @@ jobs:
       - name: Build Package
         run: npm install
 
-      - name: Get latest endorctl version
+      - name: Get latest endorctl version and checksum
         id: endor
         shell: bash
         run: |
           set -euo pipefail
-          version=$(curl -s https://api.endorlabs.com/meta/version | jq -r .ClientVersion)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          API="https://api.endorlabs.com/meta/version"
+          version=$(curl -s "$API" | jq -r .ClientVersion)
+
+          # Detect OS/Arch and pick matching checksum key from ClientChecksums
+          os=$(uname -s)
+          arch=$(uname -m)
+          case "${os}_${arch}" in
+            Linux_x86_64)    key="ARCH_TYPE_LINUX_AMD64"   ;;
+            Linux_aarch64)   key="ARCH_TYPE_LINUX_ARM64"   ;;
+            Darwin_x86_64)   key="ARCH_TYPE_MACOS_AMD64"   ;;
+            Darwin_arm64)    key="ARCH_TYPE_MACOS_ARM64"   ;;
+            MINGW*_*|CYGWIN*_*|MSYS*_*|Windows_NT_*) key="ARCH_TYPE_WINDOWS_AMD64" ;;
+            *) echo "Unsupported runner platform: ${os}_${arch}"; exit 1 ;;
+          esac
+
+          checksum=$(curl -s "$API" | jq -r ".ClientChecksums.\"$key\"")
+          if [ -z "$checksum" ] || [ "$checksum" = "null" ]; then
+            echo "Could not resolve checksum for key: $key"
+            exit 1
+          fi
+
+          echo "version=$version"   >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
 
       # Pull Requests: PR mode
       - name: Endor Labs scan pull request
@@ -39,6 +60,7 @@ jobs:
           pr: true
           sarif_file: findings.sarif
           endorctl_version: "${{ steps.endor.outputs.version }}"
+          endorctl_checksum: "${{ steps.endor.outputs.checksum }}"
 
       # Push to default branch: monitor mode
       - name: Endor Labs scan monitor
@@ -49,6 +71,7 @@ jobs:
           pr: false
           sarif_file: findings.sarif
           endorctl_version: "${{ steps.endor.outputs.version }}"
+          endorctl_checksum: "${{ steps.endor.outputs.checksum }}"
 
       - name: Upload SARIF to GitHub
         uses: github/codeql-action/upload-sarif@v3
