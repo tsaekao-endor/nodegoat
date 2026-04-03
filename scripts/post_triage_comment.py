@@ -36,6 +36,7 @@ def fetch_findings(namespace: str) -> list[dict]:
     """Fetch open CI-blocking and CI-warning findings from the Endor Labs API."""
     cmd = [
         "endorctl", "api", "list",
+        "--enable-github-action-token",
         f"--namespace={namespace}",
         "--resource=Finding",
         "--output-type=json",
