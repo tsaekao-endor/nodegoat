@@ -26,15 +26,17 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
         run: |
-          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headSha)
+          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headRefOid)
           echo "branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
-          echo "sha=$(echo $PR_DATA | jq -r .headSha)" >> $GITHUB_OUTPUT
+          echo "sha=$(echo $PR_DATA | jq -r .headRefOid)" >> $GITHUB_OUTPUT
 
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.branch }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Fetch full history so we can commit and push
+          fetch-depth: 0
 
       - name: Install endorctl
         id: endor
