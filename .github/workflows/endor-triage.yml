@@ -1,0 +1,59 @@
+name: Endor Labs Triage Handler
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  triage:
+    # Only run on PR comments that contain /endor commands
+    if: |
+      github.event.issue.pull_request != null &&
+      (contains(github.event.comment.body, '/endor fp') ||
+       contains(github.event.comment.body, '/endor accept-risk'))
+
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Get PR branch
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headSha)
+          echo "branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
+          echo "sha=$(echo $PR_DATA | jq -r .headSha)" >> $GITHUB_OUTPUT
+
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.branch }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install endorctl
+        run: |
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
+          chmod +x endorctl
+          sudo mv endorctl /usr/local/bin/endorctl
+
+      - name: Authenticate with Endor Labs (keyless)
+        uses: endorlabs/github-action/install@v1
+        with:
+          namespace: "endor-solutions-tsaekao"
+
+      - name: Handle triage command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENDOR_NAMESPACE: "endor-solutions-tsaekao"
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPO: ${{ github.repository }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+          COMMENTER: ${{ github.event.comment.user.login }}
+        run: |
+          python3 scripts/handle_triage_command.py
