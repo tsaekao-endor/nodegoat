@@ -37,20 +37,25 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install endorctl
+        id: endor
         run: |
-          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
+          set -euo pipefail
+          API="https://api.endorlabs.com/meta/version"
+          VERSION=$(curl -s "$API" | jq -r .ClientVersion)
+          CHECKSUM=$(curl -s "$API" | jq -r '.ClientChecksums."ARCH_TYPE_LINUX_AMD64"')
+          curl -fsSL "https://storage.googleapis.com/endorlabs/${VERSION}/binaries/endorctl_linux_amd64" \
+            -o endorctl
+          echo "$CHECKSUM  endorctl" | sha256sum --check
           chmod +x endorctl
           sudo mv endorctl /usr/local/bin/endorctl
-
-      - name: Authenticate with Endor Labs (keyless)
-        uses: endorlabs/github-action/install@v1
-        with:
-          namespace: "endor-solutions-tsaekao"
 
       - name: Handle triage command
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENDOR_NAMESPACE: "endor-solutions-tsaekao"
+          # Keyless auth: endorctl detects these automatically in GitHub Actions
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENDOR_GITHUB_ACTION_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
           COMMENT_BODY: ${{ github.event.comment.body }}

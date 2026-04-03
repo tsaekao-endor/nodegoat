@@ -92,6 +92,7 @@ def run_ignore(uuid: str, namespace: str, reason: str, commenter: str) -> tuple[
     """
     cmd = [
         "endorctl", "ignore",
+        "--enable-github-action-token",
         f"--namespace={namespace}",
         f"--finding-uuid={uuid}",
         f"--path={IGNORE_FILE}",
