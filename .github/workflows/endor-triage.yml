@@ -39,15 +39,8 @@ jobs:
           fetch-depth: 0
 
       - name: Install endorctl
-        id: endor
         run: |
-          set -euo pipefail
-          API="https://api.endorlabs.com/meta/version"
-          VERSION=$(curl -s "$API" | jq -r .ClientVersion)
-          CHECKSUM=$(curl -s "$API" | jq -r '.ClientChecksums."ARCH_TYPE_LINUX_AMD64"')
-          curl -fsSL "https://storage.googleapis.com/endorlabs/${VERSION}/binaries/endorctl_linux_amd64" \
-            -o endorctl
-          echo "$CHECKSUM  endorctl" | sha256sum --check
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
           chmod +x endorctl
           sudo mv endorctl /usr/local/bin/endorctl
 
