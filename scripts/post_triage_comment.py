@@ -32,8 +32,13 @@ SEVERITY_EMOJI = {
 COMMENT_HEADER = "## :shield: Endor Labs — Triage Findings"
 
 
-def fetch_findings(namespace: str) -> list[dict]:
-    """Fetch open CI-blocking and CI-warning findings from the Endor Labs API."""
+def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
+    """Fetch open CI-blocking and CI-warning findings scoped to this project."""
+    filter_expr = (
+        f'spec.finding_tags contains ["FINDING_TAGS_CI_BLOCKER","FINDING_TAGS_CI_WARNING"]'
+        f' and spec.dismiss==false'
+        f' and spec.project_uuid=="{project_uuid}"'
+    )
     cmd = [
         "endorctl", "api", "list",
         "--enable-github-action-token",
@@ -41,8 +46,7 @@ def fetch_findings(namespace: str) -> list[dict]:
         "--resource=Finding",
         "--output-type=json",
         "--page-size=50",
-        "--filter=spec.finding_tags contains [\"FINDING_TAGS_CI_BLOCKER\","
-        "\"FINDING_TAGS_CI_WARNING\"] and spec.dismiss==false",
+        f"--filter={filter_expr}",
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
@@ -122,10 +126,11 @@ def post_comment(pr_number: str, repo: str, body: str) -> None:
 def main() -> None:
     """Entry point."""
     namespace = os.environ["ENDOR_NAMESPACE"]
+    project_uuid = os.environ["ENDOR_PROJECT_UUID"]
     pr_number = os.environ["PR_NUMBER"]
     repo = os.environ["REPO"]
 
-    findings = fetch_findings(namespace)
+    findings = fetch_findings(namespace, project_uuid)
 
     if not findings:
         print("No CI-blocking or CI-warning findings found. Skipping triage comment.")

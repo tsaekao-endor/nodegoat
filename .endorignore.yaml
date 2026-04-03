@@ -1,12 +1,2 @@
 version: 1.0.0
-ignore:
-  - id: tsaekao-endor-1
-    username: tsaekao-endor@github
-    update_time: 2026-04-03 19:45:26 UTC
-    finding_name: 'GHSA-pq67-2wwv-3xjx: tar-fs Vulnerable to Link Following and Path Traversal via Extracting a Crafted tar File'
-    parent_name: npm://homepage@1.2.0
-    dependency_name: npm://tar-fs@2.0.1
-    vuln_id: GHSA-pq67-2wwv-3xjx
-    extra_key: GHSA-pq67-2wwv-3xjx
-    reason: false-positive
-    comments: Triaged via PR comment by tsaekao-endor
+ignore: []
