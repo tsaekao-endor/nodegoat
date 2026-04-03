@@ -28,6 +28,12 @@ jobs:
           enable_pr_comments: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install endorctl
+        run: |
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
+          chmod +x endorctl
+          sudo mv endorctl /usr/local/bin/endorctl
+
       - name: Post triage comment
         if: always()
         env:

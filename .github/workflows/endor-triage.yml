@@ -26,15 +26,17 @@ jobs:
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
         run: |
-          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headSha)
+          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headRefOid)
           echo "branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
-          echo "sha=$(echo $PR_DATA | jq -r .headSha)" >> $GITHUB_OUTPUT
+          echo "sha=$(echo $PR_DATA | jq -r .headRefOid)" >> $GITHUB_OUTPUT
 
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.branch }}
           token: ${{ secrets.GITHUB_TOKEN }}
+          # Fetch full history so we can commit and push
+          fetch-depth: 0
 
       - name: Install endorctl
         run: |
@@ -42,15 +44,13 @@ jobs:
           chmod +x endorctl
           sudo mv endorctl /usr/local/bin/endorctl
 
-      - name: Authenticate with Endor Labs (keyless)
-        uses: endorlabs/github-action/install@v1
-        with:
-          namespace: "endor-solutions-tsaekao"
-
       - name: Handle triage command
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENDOR_NAMESPACE: "endor-solutions-tsaekao"
+          # Keyless auth: endorctl detects these automatically in GitHub Actions
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENDOR_GITHUB_ACTION_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
           COMMENT_BODY: ${{ github.event.comment.body }}
