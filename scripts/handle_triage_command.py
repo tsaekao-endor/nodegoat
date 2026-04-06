@@ -6,7 +6,7 @@ numbers to UUIDs from the hidden findings map in the triage comment, runs
 endorctl ignore for each finding, commits the updated .endorignore.yaml to the
 PR branch, and replies with a summary comment.
 
-Supported command syntax:
+Supported commands:
     /endor fp 1,2
     /endor accept-risk 3
     /endor fp 1 --comment="Not applicable in our environment"
@@ -14,24 +14,21 @@ Supported command syntax:
     /endor accept-risk 3 --expire-if-fix
     /endor fp 1 --comment="Low risk" --expires=2026-06-30 --expire-if-fix
 
-Required environment variables:
-    ENDOR_NAMESPACE  - Endor Labs tenant namespace
-    PR_NUMBER        - Pull request number
-    REPO             - GitHub repository in owner/repo format
-    GH_TOKEN         - GitHub token with pull-requests:write and contents:write
-    COMMENT_BODY     - Body text of the triggering PR comment
-    COMMENTER        - GitHub username of the person who posted the command
+Required:
+    ENDOR_NAMESPACE  - Your Endor Labs tenant namespace.
 
-Authentication (one of the following):
-    GitHub Actions OIDC (automatic when GITHUB_ACTIONS=true):
-        No extra configuration needed. endorctl uses the OIDC token automatically.
-    API key:
-        ENDOR_API_KEY  - Endor Labs API key (set in your CI secrets)
-    Service account key pair:
-        ENDOR_KEYID      - Key ID
-        ENDOR_PRIVATE_KEY - Private key (base64-encoded or PEM)
+Everything else is auto-detected from the standard GitHub Actions environment.
+Set the corresponding variable explicitly to override:
+    GH_TOKEN      - GitHub token (defaults to GITHUB_TOKEN)
+    REPO          - owner/repo (defaults to GITHUB_REPOSITORY)
+    PR_NUMBER     - PR number (auto-detected from event payload)
+    COMMENT_BODY  - Text of the triggering comment (auto-detected from event payload)
+    COMMENTER     - GitHub username (defaults to GITHUB_ACTOR)
 
-The endorctl binary must be on PATH before this script runs.
+Authentication against Endor Labs:
+    GitHub Actions OIDC: automatic when GITHUB_ACTIONS=true (no secrets needed).
+    API key:             set ENDOR_API_KEY as a CI secret.
+    Key pair:            set ENDOR_KEYID and ENDOR_PRIVATE_KEY as CI secrets.
 """
 
 import json
@@ -44,7 +41,6 @@ import tempfile
 
 IGNORE_FILE = ".endorignore.yaml"
 
-# Maps command keyword to endorctl --reason value
 COMMAND_MAP = {
     "fp": "false-positive",
     "accept-risk": "risk-accepted",
@@ -55,34 +51,55 @@ COMMAND_LABELS = {
     "accept-risk": "accepted risk",
 }
 
-# Matches YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
-def _endorctl_auth_flags() -> list[str]:
-    """Return the appropriate endorctl auth flags for the current CI environment.
+# ── Environment helpers ───────────────────────────────────────────────────────
 
-    In GitHub Actions, uses keyless OIDC (no secrets needed).
-    In all other environments, endorctl picks up credentials from environment
-    variables (ENDOR_API_KEY, ENDOR_KEYID/ENDOR_PRIVATE_KEY) automatically.
-    """
+def _github_event() -> dict:
+    """Load the GitHub Actions event payload, or return an empty dict."""
+    path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path:
+        return {}
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _resolve(env_var: str, *fallbacks: str) -> str:
+    """Return the first non-empty value: explicit env var, then fallbacks."""
+    val = os.environ.get(env_var, "").strip()
+    if val:
+        return val
+    for fb in fallbacks:
+        fb = fb.strip()
+        if fb:
+            return fb
+    return ""
+
+
+# ── endorctl helpers ──────────────────────────────────────────────────────────
+
+def _auth_flags() -> list[str]:
+    """Return endorctl auth flags for the current environment."""
     if os.environ.get("GITHUB_ACTIONS") == "true":
         return ["--enable-github-action-token"]
     return []
 
 
+# ── Command parsing ───────────────────────────────────────────────────────────
+
 def parse_command(comment_body: str) -> tuple[str | None, list[str], dict]:
     """Parse a triage command and optional flags from a PR comment body.
 
-    Returns a tuple of (command_key, list_of_finding_numbers, options).
-    options may contain: comment (str), expires (str), expire_if_fix (bool).
-    command_key is one of the keys in COMMAND_MAP, or None if no command found.
+    Returns (command_key, list_of_finding_numbers, options).
     """
     command_key = None
     numbers: list[str] = []
 
     for key in COMMAND_MAP:
-        # Capture the numbers portion — stops at first '--' or end of line
         match = re.search(
             rf"/endor {re.escape(key)}\s+([\d,\s]+?)(?:\s+--|$)",
             comment_body,
@@ -98,12 +115,10 @@ def parse_command(comment_body: str) -> tuple[str | None, list[str], dict]:
 
     options: dict = {}
 
-    # --comment="..." or --comment=...
     comment_match = re.search(r'--comment=["\']?([^"\']+)["\']?', comment_body)
     if comment_match:
         options["comment"] = comment_match.group(1).strip()
 
-    # --expires=YYYY-MM-DD
     expires_match = re.search(r"--expires=(\S+)", comment_body)
     if expires_match:
         date_val = expires_match.group(1).strip()
@@ -115,21 +130,18 @@ def parse_command(comment_body: str) -> tuple[str | None, list[str], dict]:
                 file=sys.stderr,
             )
 
-    # --expire-if-fix (boolean flag)
     if "--expire-if-fix" in comment_body:
         options["expire_if_fix"] = True
 
     return command_key, numbers, options
 
 
+# ── UUID map ──────────────────────────────────────────────────────────────────
+
 def fetch_uuid_map(pr_number: str, repo: str) -> dict[str, str]:
     """Extract the hidden UUID map from the triage comment on the PR."""
     result = subprocess.run(
-        [
-            "gh", "api",
-            f"repos/{repo}/issues/{pr_number}/comments",
-            "--jq", ".[].body",
-        ],
+        ["gh", "api", f"repos/{repo}/issues/{pr_number}/comments", "--jq", ".[].body"],
         capture_output=True,
         text=True,
     )
@@ -153,6 +165,8 @@ def fetch_uuid_map(pr_number: str, repo: str) -> dict[str, str]:
     return {}
 
 
+# ── endorctl ignore ───────────────────────────────────────────────────────────
+
 def run_ignore(
     uuid: str,
     namespace: str,
@@ -162,7 +176,7 @@ def run_ignore(
 ) -> tuple[bool, str]:
     """Run endorctl ignore for a single finding UUID.
 
-    Returns a tuple of (success, message).
+    Returns (success, message).
     """
     user_comment = options.get("comment", "")
     full_comment = f"Triaged via PR comment by {commenter}"
@@ -171,7 +185,7 @@ def run_ignore(
 
     cmd = [
         "endorctl", "ignore",
-        *_endorctl_auth_flags(),
+        *_auth_flags(),
         f"--namespace={namespace}",
         f"--finding-uuid={uuid}",
         f"--path={IGNORE_FILE}",
@@ -183,7 +197,6 @@ def run_ignore(
 
     if "expires" in options:
         cmd.append(f"--expiration-date={options['expires']}")
-
     if options.get("expire_if_fix"):
         cmd.append("--expire-if-fix-available")
 
@@ -192,6 +205,8 @@ def run_ignore(
         return True, result.stdout.strip()
     return False, result.stderr.strip()
 
+
+# ── Git commit ────────────────────────────────────────────────────────────────
 
 def commit_ignore_file(commenter: str) -> bool:
     """Stage and commit the updated ignore file to the current branch.
@@ -221,12 +236,13 @@ def commit_ignore_file(commenter: str) -> bool:
     return True
 
 
+# ── PR reply ──────────────────────────────────────────────────────────────────
+
 def post_reply(pr_number: str, repo: str, body: str) -> None:
     """Post a reply comment on the pull request via the gh CLI."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
         fh.write(body)
         tmp_path = fh.name
-
     try:
         result = subprocess.run(
             ["gh", "pr", "comment", pr_number, "--repo", repo, "--body-file", tmp_path],
@@ -251,13 +267,44 @@ def format_options_summary(options: dict) -> list[str]:
     return lines
 
 
+# ── Entry point ───────────────────────────────────────────────────────────────
+
 def main() -> None:
     """Entry point."""
-    namespace = os.environ["ENDOR_NAMESPACE"]
-    pr_number = os.environ["PR_NUMBER"]
-    repo = os.environ["REPO"]
-    comment_body = os.environ["COMMENT_BODY"].strip()
-    commenter = os.environ["COMMENTER"]
+    namespace = os.environ.get("ENDOR_NAMESPACE", "").strip()
+    if not namespace:
+        print("Error: ENDOR_NAMESPACE is required.", file=sys.stderr)
+        sys.exit(1)
+
+    event = _github_event()
+
+    repo = _resolve("REPO", os.environ.get("GITHUB_REPOSITORY", ""))
+    gh_token = _resolve("GH_TOKEN", os.environ.get("GITHUB_TOKEN", ""))
+    pr_number = _resolve(
+        "PR_NUMBER",
+        str(event.get("issue", {}).get("number", "")),
+    )
+    comment_body = _resolve(
+        "COMMENT_BODY",
+        event.get("comment", {}).get("body", ""),
+    ).strip()
+    commenter = _resolve(
+        "COMMENTER",
+        event.get("comment", {}).get("user", {}).get("login", ""),
+        os.environ.get("GITHUB_ACTOR", ""),
+    )
+
+    if not repo:
+        print("Error: could not determine repository. Set REPO=owner/repo.", file=sys.stderr)
+        sys.exit(1)
+    if not pr_number:
+        print("Error: could not determine PR number. Set PR_NUMBER.", file=sys.stderr)
+        sys.exit(1)
+    if not comment_body:
+        print("Error: could not determine comment body. Set COMMENT_BODY.", file=sys.stderr)
+        sys.exit(1)
+    if gh_token:
+        os.environ.setdefault("GH_TOKEN", gh_token)
 
     command_key, numbers, options = parse_command(comment_body)
     if not command_key:
@@ -270,14 +317,12 @@ def main() -> None:
     uuid_map = fetch_uuid_map(pr_number, repo)
     if not uuid_map:
         post_reply(
-            pr_number,
-            repo,
+            pr_number, repo,
             "❌ Could not find the findings list. Please re-run the scan to generate a "
             "fresh triage comment, then try again.",
         )
         sys.exit(1)
 
-    # Build the command echo line for the reply
     cmd_display = f"/endor {command_key} {', '.join(numbers)}"
     if "comment" in options:
         cmd_display += f' --comment="{options["comment"]}"'
