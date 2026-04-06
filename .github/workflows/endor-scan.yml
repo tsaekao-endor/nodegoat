@@ -28,7 +28,10 @@ jobs:
             -o endorctl && chmod +x endorctl && sudo mv endorctl /usr/local/bin/endorctl
 
       - name: Endor Labs scan
-        run: endorctl scan --namespace=endor-solutions-tsaekao
+        run: |
+          endorctl scan \
+            --enable-github-action-token \
+            --namespace=endor-solutions-tsaekao
 
   # ── PR scan with triage comment ───────────────────────────────────────────
   pr-scan:
@@ -56,6 +59,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           endorctl scan \
+            --enable-github-action-token \
             --pr \
             --pr-incremental \
             --enable-pr-comments \
