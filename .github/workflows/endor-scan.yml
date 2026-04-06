@@ -58,6 +58,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENDOR_NAMESPACE: "endor-solutions-tsaekao"
+          ENDOR_SCAN_RESULTS: "/tmp/endor-scan.json"
         run: |
           endorctl scan \
             --enable-github-action-token \
@@ -66,6 +67,7 @@ jobs:
             --enable-pr-comments \
             --scm-token=${{ secrets.GITHUB_TOKEN }} \
             --scm-pr-id=${{ github.event.pull_request.number }} \
-            --namespace=endor-solutions-tsaekao
+            --namespace=endor-solutions-tsaekao \
+            --output-type=json > /tmp/endor-scan.json || true
 
           python3 scripts/post_triage_comment.py
