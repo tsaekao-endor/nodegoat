@@ -10,3 +10,66 @@ ignore:
     extra_key: GHSA-37ch-88jc-xwx2
     reason: false-positive
     comments: Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-2
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:25 UTC
+    finding_name: 'GHSA-3h5v-q93c-6h6q: ws affected by a DoS when handling a request with many HTTP headers'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://ws@1.1.5
+    vuln_id: GHSA-3h5v-q93c-6h6q
+    extra_key: GHSA-3h5v-q93c-6h6q
+    reason: false-positive
+    expiration_date: 2026-06-30
+    comments: Low risk — Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-3
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:27 UTC
+    finding_name: 'GHSA-c2qf-rxjj-qqgw: semver vulnerable to Regular Expression Denial of Service'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://semver@5.7.0
+    vuln_id: GHSA-c2qf-rxjj-qqgw
+    extra_key: GHSA-c2qf-rxjj-qqgw
+    reason: false-positive
+    expiration_date: 2026-06-30
+    comments: Low risk — Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-4
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:30 UTC
+    finding_name: 'GHSA-gqgv-6jq5-jjj9: Prototype Pollution Protection Bypass in qs'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://qs@6.2.1
+    vuln_id: GHSA-gqgv-6jq5-jjj9
+    extra_key: GHSA-gqgv-6jq5-jjj9
+    reason: false-positive
+    expiration_date: 2026-06-30
+    comments: Low risk — Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-5
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:38 UTC
+    finding_name: 'GHSA-xf7w-r453-m56c: Arbitrary File Overwrite in fstream'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://fstream@1.0.10
+    vuln_id: GHSA-xf7w-r453-m56c
+    extra_key: GHSA-xf7w-r453-m56c
+    reason: false-positive
+    comments: Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-6
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:39 UTC
+    finding_name: 'GHSA-qpx9-hpmf-5gmw: Underscore has unlimited recursion in _.flatten and _.isEqual, potential for DoS attack'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://underscore@1.8.3
+    vuln_id: GHSA-qpx9-hpmf-5gmw
+    extra_key: GHSA-qpx9-hpmf-5gmw
+    reason: false-positive
+    comments: Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-7
+    username: tsaekao-endor@github
+    update_time: 2026-04-06 21:41:49 UTC
+    finding_name: 'GHSA-2rq5-699j-x7p6: Arbitrary local file read vulnerability during template rendering '
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://swig@1.4.2
+    vuln_id: GHSA-2rq5-699j-x7p6
+    extra_key: GHSA-2rq5-699j-x7p6
+    reason: risk-accepted
+    comments: Triaged via PR comment by tsaekao-endor
