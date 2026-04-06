@@ -26,18 +26,19 @@ import tempfile
 
 PLATFORM_URL = "https://app.endorlabs.com"
 
-# Pre-encoded filter that shows non-dismissed findings on the platform
-# Decoded: {"findingExceptions":{"comparator":"NOT_EQUAL","key":"spec.dismiss","value":true}}
-_FINDINGS_FILTER_QS = (
-    "?filter.values=%7B%22findingExceptions%22%3A%7B%22comparator%22%3A"
-    "%22NOT_EQUAL%22%2C%22key%22%3A%22spec.dismiss%22%2C%22value%22%3Atrue%7D%7D"
-)
 
 SEVERITY_EMOJI = {
     "FINDING_LEVEL_CRITICAL": "🔴",
     "FINDING_LEVEL_HIGH": "🟠",
     "FINDING_LEVEL_MEDIUM": "🟡",
     "FINDING_LEVEL_LOW": "🔵",
+}
+
+SEVERITY_LABEL = {
+    "FINDING_LEVEL_CRITICAL": "🔴 Critical",
+    "FINDING_LEVEL_HIGH": "🟠 High",
+    "FINDING_LEVEL_MEDIUM": "🟡 Medium",
+    "FINDING_LEVEL_LOW": "🔵 Low",
 }
 
 # Lower number = higher priority in sort
@@ -88,46 +89,15 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
     return data.get("list", {}).get("objects", [])
 
 
-def fetch_pr_version_uuid(namespace: str, project_uuid: str) -> str | None:
-    """Return the UUID of the most recent PR RepositoryVersion for this project."""
-    cmd = [
-        "endorctl", "api", "list",
-        "--enable-github-action-token",
-        f"--namespace={namespace}",
-        "--resource=RepositoryVersion",
-        "--output-type=json",
-        "--page-size=1",
-        "--sort-path=meta.create_time",
-        "--sort-order=descending",
-        f'--filter=spec.project_uuid=="{project_uuid}" and context.type=="CONTEXT_TYPE_PR"',
-    ]
-    rc, stdout, _ = _run(cmd)
-    if rc != 0:
-        return None
-    try:
-        data = json.loads(stdout)
-        objs = data.get("list", {}).get("objects", [])
-        if objs:
-            return objs[0].get("uuid")
-    except (json.JSONDecodeError, KeyError):
-        pass
-    return None
-
 
 def finding_url(namespace: str, finding_uuid: str) -> str:
     """Return the Endor Labs platform URL for a single finding."""
     return f"{PLATFORM_URL}/t/{namespace}/findings/{finding_uuid}"
 
 
-def pr_scan_url(namespace: str, project_uuid: str, version_uuid: str | None) -> str:
-    """Return the Endor Labs platform URL for the PR scan findings page."""
-    if version_uuid:
-        return (
-            f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}"
-            f"/versions/{version_uuid}/findings{_FINDINGS_FILTER_QS}"
-        )
-    # Fallback to project PR runs list if version UUID is unavailable
-    return f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}/pr-runs"
+def pr_scan_url(namespace: str, project_uuid: str) -> str:
+    """Return the Endor Labs platform URL for the project PR scans page."""
+    return f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}/versions/default/pr-runs"
 
 
 def advisory_url(vuln_id: str) -> str:
@@ -180,7 +150,6 @@ def build_comment(
     findings: list[dict],
     namespace: str,
     project_uuid: str,
-    scan_uuid: str | None,
 ) -> tuple[str, dict]:
     """Build the PR comment body and a number-to-UUID mapping.
 
@@ -189,12 +158,12 @@ def build_comment(
     uuid_map: dict[str, str] = {}
     lines: list[str] = []
 
-    scan_link = pr_scan_url(namespace, project_uuid, scan_uuid)
+    scan_link = pr_scan_url(namespace, project_uuid)
 
     lines.append(COMMENT_HEADER)
     lines.append("")
     lines.append(
-        f'<a href="{scan_link}" target="_blank">View this PR scan on Endor Labs →</a>'
+        f'<a href="{scan_link}" target="_blank">View PR scans on Endor Labs →</a>'
     )
     lines.append("")
     lines.append("Reply with a command to triage findings in bulk:")
@@ -220,8 +189,8 @@ def build_comment(
     lines.append("")
     lines.append("### Findings")
     lines.append("")
-    lines.append("| Finding # | Sev | Package | Vuln | Description |")
-    lines.append("|-----------|-----|---------|------|-------------|")
+    lines.append("| Finding | Severity | Package | Vuln | Description |")
+    lines.append("|---------|----------|---------|------|-------------|")
 
     sorted_findings = sorted(findings, key=sort_key)
 
@@ -233,7 +202,7 @@ def build_comment(
         vuln_id = extract_vuln_id(obj)
 
         uuid_map[str(i)] = uuid
-        emoji = SEVERITY_EMOJI.get(level, "⚪")
+        severity_cell = SEVERITY_LABEL.get(level, "⚪ Unknown")
 
         desc = clean_description(description, vuln_id).replace("|", "\\|")
         dep_cell = f"`{dep}`" if dep else "—"
@@ -254,7 +223,7 @@ def build_comment(
         else:
             vuln_cell = "—"
 
-        lines.append(f"| {num_cell} | {emoji} | {dep_cell} | {vuln_cell} | {desc} |")
+        lines.append(f"| {num_cell} | {severity_cell} | {dep_cell} | {vuln_cell} | {desc} |")
 
     # Hidden machine-readable UUID map consumed by handle_triage_command.py
     lines.append("")
@@ -292,13 +261,7 @@ def main() -> None:
         print("No CI-blocking or CI-warning findings found. Skipping triage comment.")
         return
 
-    scan_uuid = fetch_pr_version_uuid(namespace, project_uuid)
-    if scan_uuid:
-        print(f"Resolved PR version UUID: {scan_uuid}")
-    else:
-        print("Could not resolve PR version UUID; linking to project PR runs page.")
-
-    body, uuid_map = build_comment(findings, namespace, project_uuid, scan_uuid)
+    body, uuid_map = build_comment(findings, namespace, project_uuid)
     print(f"Posting triage comment for {len(uuid_map)} finding(s) on PR #{pr_number}...")
     post_comment(pr_number, repo, body)
     print("Done.")
