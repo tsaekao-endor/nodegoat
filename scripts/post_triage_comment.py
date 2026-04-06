@@ -35,10 +35,10 @@ SEVERITY_EMOJI = {
 }
 
 SEVERITY_LABEL = {
-    "FINDING_LEVEL_CRITICAL": "🔴 Critical",
-    "FINDING_LEVEL_HIGH": "🟠 High",
-    "FINDING_LEVEL_MEDIUM": "🟡 Medium",
-    "FINDING_LEVEL_LOW": "🔵 Low",
+    "FINDING_LEVEL_CRITICAL": "🔴&nbsp;Critical",
+    "FINDING_LEVEL_HIGH": "🟠&nbsp;High",
+    "FINDING_LEVEL_MEDIUM": "🟡&nbsp;Medium",
+    "FINDING_LEVEL_LOW": "🔵&nbsp;Low",
 }
 
 # Lower number = higher priority in sort
@@ -189,8 +189,8 @@ def build_comment(
     lines.append("")
     lines.append("### Findings")
     lines.append("")
-    lines.append("| Finding | Severity | Package | Vuln | Description |")
-    lines.append("|---------|----------|---------|------|-------------|")
+    lines.append("| Finding | Severity | Package | Vulnerability |")
+    lines.append("|---------|----------|---------|---------------|")
 
     sorted_findings = sorted(findings, key=sort_key)
 
@@ -214,16 +214,17 @@ def build_comment(
         else:
             num_cell = f"**{i}**"
 
-        # Vuln ID links to the public advisory (new tab)
+        # Vuln ID links to public advisory; combined with description in one cell
         adv_url = advisory_url(vuln_id) if vuln_id else ""
         if vuln_id and adv_url:
-            vuln_cell = f'<a href="{adv_url}" target="_blank"><code>{vuln_id}</code></a>'
+            vuln_link = f'<a href="{adv_url}" target="_blank">{vuln_id}</a>'
+            vuln_cell = f"{vuln_link} {desc}"
         elif vuln_id:
-            vuln_cell = f"`{vuln_id}`"
+            vuln_cell = f"`{vuln_id}` {desc}"
         else:
-            vuln_cell = "—"
+            vuln_cell = desc
 
-        lines.append(f"| {num_cell} | {severity_cell} | {dep_cell} | {vuln_cell} | {desc} |")
+        lines.append(f"| {num_cell} | {severity_cell} | {dep_cell} | {vuln_cell} |")
 
     # Hidden machine-readable UUID map consumed by handle_triage_command.py
     lines.append("")
