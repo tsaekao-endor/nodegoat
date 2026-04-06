@@ -1,11 +1,36 @@
-name: Endor Labs PR Scan
+name: Endor Labs Scan
 
 on:
   pull_request:
     branches: [main, master]
+  push:
+    branches: [main, master]
 
 jobs:
-  scan:
+  # ── Full scan on merge to main/master ─────────────────────────────────────
+  full-scan:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Endor Labs scan
+        uses: endorlabs/github-action@v1
+        with:
+          namespace: "endor-solutions-tsaekao"
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  # ── PR scan with triage comment ───────────────────────────────────────────
+  pr-scan:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -19,7 +44,7 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Endor Labs Scan
+      - name: Endor Labs scan
         uses: endorlabs/github-action@v1
         with:
           namespace: "endor-solutions-tsaekao"
@@ -42,5 +67,4 @@ jobs:
           ENDOR_PROJECT_UUID: "69d0144295e0eff4c8bcd4b7"
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
-        run: |
-          python3 scripts/post_triage_comment.py
+        run: python3 scripts/post_triage_comment.py
