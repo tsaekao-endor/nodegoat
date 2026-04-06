@@ -95,19 +95,30 @@ def build_comment(findings: list[dict]) -> tuple[str, dict]:
     lines.append("")
     lines.append("### Findings")
     lines.append("")
+    lines.append("| # | Severity | Package | Vuln ID | Description |")
+    lines.append("|---|----------|---------|---------|-------------|")
 
     for i, obj in enumerate(findings, start=1):
         uuid = obj.get("uuid", "")
         description = obj.get("meta", {}).get("description", "Unknown finding")
+        # Strip the "GHSA-xxxx: " prefix from description if vuln_id is shown separately
         level = obj.get("spec", {}).get("level", "")
         dep = obj.get("spec", {}).get("target_dependency_package_name", "")
         vuln_id = obj.get("spec", {}).get("vuln_id", "")
 
         uuid_map[str(i)] = uuid
         emoji = SEVERITY_EMOJI.get(level, "⚪")
-        vuln_suffix = f" `{vuln_id}`" if vuln_id else ""
-        dep_label = f" `{dep}`" if dep else ""
-        lines.append(f"**{i}.** {emoji}{dep_label}{vuln_suffix} — {description}")
+
+        # Trim "GHSA-xxxx: " prefix from description so it's not duplicated
+        desc = description
+        if vuln_id and desc.startswith(vuln_id + ": "):
+            desc = desc[len(vuln_id) + 2:]
+        # Escape pipe characters so they don't break the table
+        desc = desc.replace("|", "\\|")
+
+        vuln_cell = f"`{vuln_id}`" if vuln_id else "—"
+        dep_cell = f"`{dep}`" if dep else "—"
+        lines.append(f"| **{i}** | {emoji} | {dep_cell} | {vuln_cell} | {desc} |")
 
     # Hidden machine-readable UUID map consumed by handle_triage_command.py
     lines.append("")
