@@ -2,25 +2,29 @@
 """Post an Endor Labs triage comment on a pull request.
 
 Fetches open CI-blocking and CI-warning findings from the Endor Labs API,
-builds a numbered list with a hidden UUID map, and posts it as a PR comment.
-Developers can then reply with /endor fp or /endor accept-risk commands to
-triage findings without leaving the PR.
+builds a sorted, linked table with a hidden UUID map, and posts it as a PR
+comment. Developers can reply with /endor fp or /endor accept-risk commands
+to triage findings without leaving the PR.
 
 Required environment variables:
-    ENDOR_NAMESPACE  - Endor Labs tenant namespace
-    PR_NUMBER        - Pull request number
-    REPO             - GitHub repository in owner/repo format
-    GH_TOKEN         - GitHub token with pull-requests:write permission
+    ENDOR_NAMESPACE    - Endor Labs tenant namespace
+    ENDOR_PROJECT_UUID - Endor Labs project UUID for this repository
+    PR_NUMBER          - Pull request number
+    REPO               - GitHub repository in owner/repo format
+    GH_TOKEN           - GitHub token with pull-requests:write permission
 
 The endorctl binary must be installed and authenticated before this script runs.
 """
 
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
 
+
+PLATFORM_URL = "https://app.endorlabs.com"
 
 SEVERITY_EMOJI = {
     "FINDING_LEVEL_CRITICAL": "🔴",
@@ -29,7 +33,24 @@ SEVERITY_EMOJI = {
     "FINDING_LEVEL_LOW": "🔵",
 }
 
+# Lower number = higher priority in sort
+SEVERITY_ORDER = {
+    "FINDING_LEVEL_CRITICAL": 0,
+    "FINDING_LEVEL_HIGH": 1,
+    "FINDING_LEVEL_MEDIUM": 2,
+    "FINDING_LEVEL_LOW": 3,
+}
+
 COMMENT_HEADER = "## :shield: Endor Labs — Triage Findings"
+
+# Matches a leading "GHSA-xxxx-xxxx-xxxx: " or "CVE-YYYY-NNNNN: " prefix
+_VULN_PREFIX_RE = re.compile(r"^((?:GHSA|CVE)-[\w-]+):\s*")
+
+
+def _run(cmd: list[str]) -> tuple[int, str, str]:
+    """Run a subprocess and return (returncode, stdout, stderr)."""
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode, result.stdout, result.stderr
 
 
 def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
@@ -48,21 +69,100 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
         "--page-size=50",
         f"--filter={filter_expr}",
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Warning: endorctl api list failed: {result.stderr.strip()}", file=sys.stderr)
+    rc, stdout, stderr = _run(cmd)
+    if rc != 0:
+        print(f"Warning: endorctl api list failed: {stderr.strip()}", file=sys.stderr)
         return []
-
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(stdout)
     except json.JSONDecodeError as exc:
         print(f"Warning: unable to parse findings JSON: {exc}", file=sys.stderr)
         return []
-
     return data.get("list", {}).get("objects", [])
 
 
-def build_comment(findings: list[dict]) -> tuple[str, dict]:
+def fetch_pr_scan_uuid(namespace: str, project_uuid: str) -> str | None:
+    """Return the UUID of the most recent PR ScanResult for this project."""
+    cmd = [
+        "endorctl", "api", "list",
+        "--enable-github-action-token",
+        f"--namespace={namespace}",
+        "--resource=ScanResult",
+        "--output-type=json",
+        "--page-size=1",
+        "--sort-path=meta.create_time",
+        "--sort-order=descending",
+        f'--filter=spec.project_uuid=="{project_uuid}" and context.type=="CONTEXT_TYPE_PR"',
+    ]
+    rc, stdout, _ = _run(cmd)
+    if rc != 0:
+        return None
+    try:
+        data = json.loads(stdout)
+        objs = data.get("list", {}).get("objects", [])
+        if objs:
+            return objs[0].get("uuid")
+    except (json.JSONDecodeError, KeyError):
+        pass
+    return None
+
+
+def finding_url(namespace: str, finding_uuid: str) -> str:
+    """Return the Endor Labs platform URL for a single finding."""
+    return f"{PLATFORM_URL}/t/{namespace}/findings/{finding_uuid}"
+
+
+def pr_scan_url(namespace: str, project_uuid: str, scan_uuid: str | None) -> str:
+    """Return the Endor Labs platform URL for the PR scan results."""
+    base = f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}/pr-runs"
+    if scan_uuid:
+        return f"{base}/{scan_uuid}/findings"
+    return base
+
+
+def extract_vuln_id(obj: dict) -> str:
+    """Extract the vuln ID from the finding, falling back to parsing the description."""
+    # Prefer the dedicated field
+    vuln_id = obj.get("spec", {}).get("vuln_id", "").strip()
+    if vuln_id:
+        return vuln_id
+    # Also try extra_key which often holds the GHSA
+    extra_key = obj.get("spec", {}).get("extra_key", "").strip()
+    if extra_key and re.match(r"^(GHSA|CVE)-", extra_key):
+        return extra_key
+    # Last resort: parse the leading "GHSA-xxxx: " out of description
+    desc = obj.get("meta", {}).get("description", "")
+    m = _VULN_PREFIX_RE.match(desc)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def clean_description(description: str, vuln_id: str) -> str:
+    """Strip the leading vuln-id prefix from a description if present."""
+    if vuln_id and description.startswith(vuln_id + ": "):
+        return description[len(vuln_id) + 2:]
+    # Strip any generic GHSA/CVE prefix even if we didn't match vuln_id
+    m = _VULN_PREFIX_RE.match(description)
+    if m:
+        return description[m.end():]
+    return description
+
+
+def sort_key(obj: dict) -> tuple:
+    """Return a sort key: (severity_rank, package_name)."""
+    level = obj.get("spec", {}).get("level", "")
+    rank = SEVERITY_ORDER.get(level, 99)
+    pkg = obj.get("spec", {}).get("target_dependency_package_name", "")
+    return (rank, pkg.lower())
+
+
+def build_comment(
+    findings: list[dict],
+    namespace: str,
+    project_uuid: str,
+    scan_uuid: str | None,
+) -> tuple[str, dict]:
     """Build the PR comment body and a number-to-UUID mapping.
 
     Returns a tuple of (comment_body, uuid_map).
@@ -70,7 +170,13 @@ def build_comment(findings: list[dict]) -> tuple[str, dict]:
     uuid_map: dict[str, str] = {}
     lines: list[str] = []
 
+    scan_link = pr_scan_url(namespace, project_uuid, scan_uuid)
+
     lines.append(COMMENT_HEADER)
+    lines.append("")
+    lines.append(
+        f"[View this PR scan on Endor Labs →]({scan_link})"
+    )
     lines.append("")
     lines.append("Reply with a command to triage findings in bulk:")
     lines.append("")
@@ -95,29 +201,33 @@ def build_comment(findings: list[dict]) -> tuple[str, dict]:
     lines.append("")
     lines.append("### Findings")
     lines.append("")
-    lines.append("| # | Severity | Package | Vuln ID | Description |")
-    lines.append("|---|----------|---------|---------|-------------|")
+    lines.append("| # | Sev | Package | Vuln ID | Description |")
+    lines.append("|---|-----|---------|---------|-------------|")
 
-    for i, obj in enumerate(findings, start=1):
+    sorted_findings = sorted(findings, key=sort_key)
+
+    for i, obj in enumerate(sorted_findings, start=1):
         uuid = obj.get("uuid", "")
         description = obj.get("meta", {}).get("description", "Unknown finding")
-        # Strip the "GHSA-xxxx: " prefix from description if vuln_id is shown separately
         level = obj.get("spec", {}).get("level", "")
         dep = obj.get("spec", {}).get("target_dependency_package_name", "")
-        vuln_id = obj.get("spec", {}).get("vuln_id", "")
+        vuln_id = extract_vuln_id(obj)
 
         uuid_map[str(i)] = uuid
         emoji = SEVERITY_EMOJI.get(level, "⚪")
 
-        # Trim "GHSA-xxxx: " prefix from description so it's not duplicated
-        desc = description
-        if vuln_id and desc.startswith(vuln_id + ": "):
-            desc = desc[len(vuln_id) + 2:]
-        # Escape pipe characters so they don't break the table
-        desc = desc.replace("|", "\\|")
-
-        vuln_cell = f"`{vuln_id}`" if vuln_id else "—"
+        desc = clean_description(description, vuln_id).replace("|", "\\|")
         dep_cell = f"`{dep}`" if dep else "—"
+
+        # Link the vuln ID to the individual finding on the platform
+        if vuln_id and uuid:
+            f_url = finding_url(namespace, uuid)
+            vuln_cell = f"[`{vuln_id}`]({f_url})"
+        elif vuln_id:
+            vuln_cell = f"`{vuln_id}`"
+        else:
+            vuln_cell = "—"
+
         lines.append(f"| **{i}** | {emoji} | {dep_cell} | {vuln_cell} | {desc} |")
 
     # Hidden machine-readable UUID map consumed by handle_triage_command.py
@@ -134,13 +244,11 @@ def post_comment(pr_number: str, repo: str, body: str) -> None:
         tmp_path = fh.name
 
     try:
-        result = subprocess.run(
-            ["gh", "pr", "comment", pr_number, "--repo", repo, "--body-file", tmp_path],
-            capture_output=True,
-            text=True,
+        rc, _, stderr = _run(
+            ["gh", "pr", "comment", pr_number, "--repo", repo, "--body-file", tmp_path]
         )
-        if result.returncode != 0:
-            print(f"Error posting PR comment: {result.stderr.strip()}", file=sys.stderr)
+        if rc != 0:
+            print(f"Error posting PR comment: {stderr.strip()}", file=sys.stderr)
             sys.exit(1)
     finally:
         os.unlink(tmp_path)
@@ -154,12 +262,17 @@ def main() -> None:
     repo = os.environ["REPO"]
 
     findings = fetch_findings(namespace, project_uuid)
-
     if not findings:
         print("No CI-blocking or CI-warning findings found. Skipping triage comment.")
         return
 
-    body, uuid_map = build_comment(findings)
+    scan_uuid = fetch_pr_scan_uuid(namespace, project_uuid)
+    if scan_uuid:
+        print(f"Resolved PR scan UUID: {scan_uuid}")
+    else:
+        print("Could not resolve PR scan UUID; linking to project PR runs page.")
+
+    body, uuid_map = build_comment(findings, namespace, project_uuid, scan_uuid)
     print(f"Posting triage comment for {len(uuid_map)} finding(s) on PR #{pr_number}...")
     post_comment(pr_number, repo, body)
     print("Done.")
