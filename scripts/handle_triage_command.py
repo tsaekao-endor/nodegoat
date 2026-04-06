@@ -22,7 +22,16 @@ Required environment variables:
     COMMENT_BODY     - Body text of the triggering PR comment
     COMMENTER        - GitHub username of the person who posted the command
 
-The endorctl binary must be installed and authenticated before this script runs.
+Authentication (one of the following):
+    GitHub Actions OIDC (automatic when GITHUB_ACTIONS=true):
+        No extra configuration needed. endorctl uses the OIDC token automatically.
+    API key:
+        ENDOR_API_KEY  - Endor Labs API key (set in your CI secrets)
+    Service account key pair:
+        ENDOR_KEYID      - Key ID
+        ENDOR_PRIVATE_KEY - Private key (base64-encoded or PEM)
+
+The endorctl binary must be on PATH before this script runs.
 """
 
 import json
@@ -48,6 +57,18 @@ COMMAND_LABELS = {
 
 # Matches YYYY-MM-DD
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _endorctl_auth_flags() -> list[str]:
+    """Return the appropriate endorctl auth flags for the current CI environment.
+
+    In GitHub Actions, uses keyless OIDC (no secrets needed).
+    In all other environments, endorctl picks up credentials from environment
+    variables (ENDOR_API_KEY, ENDOR_KEYID/ENDOR_PRIVATE_KEY) automatically.
+    """
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return ["--enable-github-action-token"]
+    return []
 
 
 def parse_command(comment_body: str) -> tuple[str | None, list[str], dict]:
@@ -150,7 +171,7 @@ def run_ignore(
 
     cmd = [
         "endorctl", "ignore",
-        "--enable-github-action-token",
+        *_endorctl_auth_flags(),
         f"--namespace={namespace}",
         f"--finding-uuid={uuid}",
         f"--path={IGNORE_FILE}",

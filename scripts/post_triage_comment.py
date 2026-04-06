@@ -16,7 +16,16 @@ Optional environment variables:
     ENDOR_PROJECT_UUID - Endor Labs project UUID. If not set, auto-detected
                          from REPO using the Endor Labs API.
 
-The endorctl binary must be installed and authenticated before this script runs.
+Authentication (one of the following):
+    GitHub Actions OIDC (automatic when GITHUB_ACTIONS=true):
+        No extra configuration needed. endorctl uses the OIDC token automatically.
+    API key:
+        ENDOR_API_KEY  - Endor Labs API key (set in your CI secrets)
+    Service account key pair:
+        ENDOR_KEYID      - Key ID
+        ENDOR_PRIVATE_KEY - Private key (base64-encoded or PEM)
+
+The endorctl binary must be on PATH before this script runs.
 """
 
 import json
@@ -64,12 +73,24 @@ def _run(cmd: list[str]) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _endorctl_auth_flags() -> list[str]:
+    """Return the appropriate endorctl auth flags for the current CI environment.
+
+    In GitHub Actions, uses keyless OIDC (no secrets needed).
+    In all other environments, endorctl picks up credentials from environment
+    variables (ENDOR_API_KEY, ENDOR_KEYID/ENDOR_PRIVATE_KEY) automatically.
+    """
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return ["--enable-github-action-token"]
+    return []
+
+
 def fetch_project_uuid(namespace: str, repo: str) -> str:
     """Look up the Endor Labs project UUID from the GitHub repository name."""
     github_url = f"https://github.com/{repo}.git"
     cmd = [
         "endorctl", "api", "list",
-        "--enable-github-action-token",
+        *_endorctl_auth_flags(),
         f"--namespace={namespace}",
         "--resource=Project",
         "--output-type=json",
@@ -98,7 +119,7 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
     )
     cmd = [
         "endorctl", "api", "list",
-        "--enable-github-action-token",
+        *_endorctl_auth_flags(),
         f"--namespace={namespace}",
         "--resource=Finding",
         "--output-type=json",
