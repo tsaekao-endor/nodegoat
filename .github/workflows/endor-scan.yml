@@ -26,6 +26,7 @@ jobs:
         uses: endorlabs/github-action@v1
         with:
           namespace: "endor-solutions-tsaekao"
+          pr: false
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
   # ── PR scan with triage comment ───────────────────────────────────────────
