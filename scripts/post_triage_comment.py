@@ -26,6 +26,13 @@ import tempfile
 
 PLATFORM_URL = "https://app.endorlabs.com"
 
+# Pre-encoded filter that shows non-dismissed findings on the platform
+# Decoded: {"findingExceptions":{"comparator":"NOT_EQUAL","key":"spec.dismiss","value":true}}
+_FINDINGS_FILTER_QS = (
+    "?filter.values=%7B%22findingExceptions%22%3A%7B%22comparator%22%3A"
+    "%22NOT_EQUAL%22%2C%22key%22%3A%22spec.dismiss%22%2C%22value%22%3Atrue%7D%7D"
+)
+
 SEVERITY_EMOJI = {
     "FINDING_LEVEL_CRITICAL": "🔴",
     "FINDING_LEVEL_HIGH": "🟠",
@@ -81,13 +88,13 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
     return data.get("list", {}).get("objects", [])
 
 
-def fetch_pr_scan_uuid(namespace: str, project_uuid: str) -> str | None:
-    """Return the UUID of the most recent PR ScanResult for this project."""
+def fetch_pr_version_uuid(namespace: str, project_uuid: str) -> str | None:
+    """Return the UUID of the most recent PR RepositoryVersion for this project."""
     cmd = [
         "endorctl", "api", "list",
         "--enable-github-action-token",
         f"--namespace={namespace}",
-        "--resource=ScanResult",
+        "--resource=RepositoryVersion",
         "--output-type=json",
         "--page-size=1",
         "--sort-path=meta.create_time",
@@ -112,12 +119,24 @@ def finding_url(namespace: str, finding_uuid: str) -> str:
     return f"{PLATFORM_URL}/t/{namespace}/findings/{finding_uuid}"
 
 
-def pr_scan_url(namespace: str, project_uuid: str, scan_uuid: str | None) -> str:
-    """Return the Endor Labs platform URL for the PR scan results."""
-    base = f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}/pr-runs"
-    if scan_uuid:
-        return f"{base}/{scan_uuid}/findings"
-    return base
+def pr_scan_url(namespace: str, project_uuid: str, version_uuid: str | None) -> str:
+    """Return the Endor Labs platform URL for the PR scan findings page."""
+    if version_uuid:
+        return (
+            f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}"
+            f"/versions/{version_uuid}/findings{_FINDINGS_FILTER_QS}"
+        )
+    # Fallback to project PR runs list if version UUID is unavailable
+    return f"{PLATFORM_URL}/t/{namespace}/projects/{project_uuid}/pr-runs"
+
+
+def advisory_url(vuln_id: str) -> str:
+    """Return the public advisory URL for a GHSA or CVE identifier."""
+    if vuln_id.upper().startswith("GHSA-"):
+        return f"https://github.com/advisories/{vuln_id}"
+    if vuln_id.upper().startswith("CVE-"):
+        return f"https://nvd.nist.gov/vuln/detail/{vuln_id}"
+    return ""
 
 
 def extract_vuln_id(obj: dict) -> str:
@@ -175,7 +194,7 @@ def build_comment(
     lines.append(COMMENT_HEADER)
     lines.append("")
     lines.append(
-        f"[View this PR scan on Endor Labs →]({scan_link})"
+        f'<a href="{scan_link}" target="_blank">View this PR scan on Endor Labs →</a>'
     )
     lines.append("")
     lines.append("Reply with a command to triage findings in bulk:")
@@ -201,8 +220,8 @@ def build_comment(
     lines.append("")
     lines.append("### Findings")
     lines.append("")
-    lines.append("| # | Sev | Package | Vuln ID | Description |")
-    lines.append("|---|-----|---------|---------|-------------|")
+    lines.append("| Finding # | Sev | Package | Vuln | Description |")
+    lines.append("|-----------|-----|---------|------|-------------|")
 
     sorted_findings = sorted(findings, key=sort_key)
 
@@ -219,16 +238,23 @@ def build_comment(
         desc = clean_description(description, vuln_id).replace("|", "\\|")
         dep_cell = f"`{dep}`" if dep else "—"
 
-        # Link the vuln ID to the individual finding on the platform
-        if vuln_id and uuid:
+        # Finding number links to the Endor platform finding page (new tab)
+        if uuid:
             f_url = finding_url(namespace, uuid)
-            vuln_cell = f"[`{vuln_id}`]({f_url})"
+            num_cell = f'<a href="{f_url}" target="_blank"><strong>{i}</strong></a>'
+        else:
+            num_cell = f"**{i}**"
+
+        # Vuln ID links to the public advisory (new tab)
+        adv_url = advisory_url(vuln_id) if vuln_id else ""
+        if vuln_id and adv_url:
+            vuln_cell = f'<a href="{adv_url}" target="_blank"><code>{vuln_id}</code></a>'
         elif vuln_id:
             vuln_cell = f"`{vuln_id}`"
         else:
             vuln_cell = "—"
 
-        lines.append(f"| **{i}** | {emoji} | {dep_cell} | {vuln_cell} | {desc} |")
+        lines.append(f"| {num_cell} | {emoji} | {dep_cell} | {vuln_cell} | {desc} |")
 
     # Hidden machine-readable UUID map consumed by handle_triage_command.py
     lines.append("")
@@ -266,11 +292,11 @@ def main() -> None:
         print("No CI-blocking or CI-warning findings found. Skipping triage comment.")
         return
 
-    scan_uuid = fetch_pr_scan_uuid(namespace, project_uuid)
+    scan_uuid = fetch_pr_version_uuid(namespace, project_uuid)
     if scan_uuid:
-        print(f"Resolved PR scan UUID: {scan_uuid}")
+        print(f"Resolved PR version UUID: {scan_uuid}")
     else:
-        print("Could not resolve PR scan UUID; linking to project PR runs page.")
+        print("Could not resolve PR version UUID; linking to project PR runs page.")
 
     body, uuid_map = build_comment(findings, namespace, project_uuid, scan_uuid)
     print(f"Posting triage comment for {len(uuid_map)} finding(s) on PR #{pr_number}...")
