@@ -54,18 +54,10 @@ jobs:
           enable_pr_comments: true
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install endorctl
-        run: |
-          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
-          chmod +x endorctl
-          sudo mv endorctl /usr/local/bin/endorctl
-
-      - name: Post triage comment
+      - name: Post Endor Labs triage comment
         if: always()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ENDOR_NAMESPACE: "endor-solutions-tsaekao"
-          ENDOR_PROJECT_UUID: "69d0144295e0eff4c8bcd4b7"
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: python3 scripts/post_triage_comment.py
+        uses: tsaekao-endor/endor-pr-triage@main
+        with:
+          namespace: "endor-solutions-tsaekao"
+          project_uuid: "69d0144295e0eff4c8bcd4b7"
+          github_token: ${{ secrets.GITHUB_TOKEN }}

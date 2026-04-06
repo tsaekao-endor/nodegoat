@@ -56,4 +56,7 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
           COMMENTER: ${{ github.event.comment.user.login }}
         run: |
-          python3 scripts/handle_triage_command.py
+          curl -fsSL \
+            https://raw.githubusercontent.com/tsaekao-endor/endor-pr-triage/main/scripts/handle_triage_command.py \
+            -o /tmp/handle_triage_command.py
+          python3 /tmp/handle_triage_command.py
