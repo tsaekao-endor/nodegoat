@@ -7,11 +7,14 @@ comment. Developers can reply with /endor fp or /endor accept-risk commands
 to triage findings without leaving the PR.
 
 Required environment variables:
-    ENDOR_NAMESPACE    - Endor Labs tenant namespace
-    ENDOR_PROJECT_UUID - Endor Labs project UUID for this repository
-    PR_NUMBER          - Pull request number
-    REPO               - GitHub repository in owner/repo format
-    GH_TOKEN           - GitHub token with pull-requests:write permission
+    ENDOR_NAMESPACE - Endor Labs tenant namespace
+    PR_NUMBER       - Pull request number
+    REPO            - GitHub repository in owner/repo format (e.g. org/repo)
+    GH_TOKEN        - GitHub token with pull-requests:write permission
+
+Optional environment variables:
+    ENDOR_PROJECT_UUID - Endor Labs project UUID. If not set, auto-detected
+                         from REPO using the Endor Labs API.
 
 The endorctl binary must be installed and authenticated before this script runs.
 """
@@ -59,6 +62,31 @@ def _run(cmd: list[str]) -> tuple[int, str, str]:
     """Run a subprocess and return (returncode, stdout, stderr)."""
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode, result.stdout, result.stderr
+
+
+def fetch_project_uuid(namespace: str, repo: str) -> str:
+    """Look up the Endor Labs project UUID from the GitHub repository name."""
+    github_url = f"https://github.com/{repo}.git"
+    cmd = [
+        "endorctl", "api", "list",
+        "--enable-github-action-token",
+        f"--namespace={namespace}",
+        "--resource=Project",
+        "--output-type=json",
+        f"--filter=meta.name==\"{github_url}\"",
+    ]
+    rc, stdout, stderr = _run(cmd)
+    if rc != 0:
+        print(f"Warning: unable to fetch project UUID: {stderr.strip()}", file=sys.stderr)
+        return ""
+    try:
+        data = json.loads(stdout)
+    except json.JSONDecodeError:
+        return ""
+    objects = data.get("list", {}).get("objects", [])
+    if not objects:
+        return ""
+    return objects[0].get("uuid", "")
 
 
 def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
@@ -253,9 +281,18 @@ def post_comment(pr_number: str, repo: str, body: str) -> None:
 def main() -> None:
     """Entry point."""
     namespace = os.environ["ENDOR_NAMESPACE"]
-    project_uuid = os.environ["ENDOR_PROJECT_UUID"]
     pr_number = os.environ["PR_NUMBER"]
     repo = os.environ["REPO"]
+
+    project_uuid = os.environ.get("ENDOR_PROJECT_UUID", "").strip()
+    if not project_uuid:
+        print(f"ENDOR_PROJECT_UUID not set — looking up project UUID for {repo}...")
+        project_uuid = fetch_project_uuid(namespace, repo)
+        if not project_uuid:
+            print(f"Error: unable to determine project UUID for {repo}. "
+                  "Set ENDOR_PROJECT_UUID explicitly to skip auto-detection.", file=sys.stderr)
+            sys.exit(1)
+        print(f"Resolved project UUID: {project_uuid}")
 
     findings = fetch_findings(namespace, project_uuid)
     if not findings:

@@ -59,5 +59,4 @@ jobs:
         uses: tsaekao-endor/endor-pr-triage@main
         with:
           namespace: "endor-solutions-tsaekao"
-          project_uuid: "69d0144295e0eff4c8bcd4b7"
           github_token: ${{ secrets.GITHUB_TOKEN }}
