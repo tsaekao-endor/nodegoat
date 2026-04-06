@@ -7,7 +7,7 @@ on:
     branches: [main, master]
 
 jobs:
-  # ── Full scan on merge to main/master ─────────────────────────────────────
+  # ── Full scan on merge ────────────────────────────────────────────────────
   full-scan:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -22,12 +22,17 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Install endorctl
+        run: |
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 \
+            -o endorctl && chmod +x endorctl && sudo mv endorctl /usr/local/bin/endorctl
+
       - name: Endor Labs scan
-        uses: endorlabs/github-action@v1
-        with:
-          namespace: "endor-solutions-tsaekao"
-          pr: false
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          endorctl scan \
+            --namespace=endor-solutions-tsaekao
 
   # ── PR scan with triage comment ───────────────────────────────────────────
   pr-scan:
@@ -45,18 +50,19 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Endor Labs scan
-        uses: endorlabs/github-action@v1
-        with:
-          namespace: "endor-solutions-tsaekao"
-          pr: true
-          pr_incremental: true
-          enable_pr_comments: true
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install endorctl
+        run: |
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 \
+            -o endorctl && chmod +x endorctl && sudo mv endorctl /usr/local/bin/endorctl
 
-      - name: Post Endor Labs triage comment
-        if: always()
-        uses: tsaekao-endor/endor-pr-triage@main
-        with:
-          namespace: "endor-solutions-tsaekao"
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Endor Labs scan and post triage comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          endorctl scan \
+            --pr \
+            --pr-incremental \
+            --enable-pr-comments \
+            --namespace=endor-solutions-tsaekao
+
+          python3 scripts/post_triage_comment.py

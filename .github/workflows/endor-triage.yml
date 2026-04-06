@@ -6,7 +6,6 @@ on:
 
 jobs:
   triage:
-    # Only run on PR comments that contain /endor commands
     if: |
       github.event.issue.pull_request != null &&
       (contains(github.event.comment.body, '/endor fp') ||
@@ -23,40 +22,25 @@ jobs:
         id: pr
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
         run: |
-          PR_DATA=$(gh pr view $PR_NUMBER --repo $REPO --json headRefName,headRefOid)
-          echo "branch=$(echo $PR_DATA | jq -r .headRefName)" >> $GITHUB_OUTPUT
-          echo "sha=$(echo $PR_DATA | jq -r .headRefOid)" >> $GITHUB_OUTPUT
+          branch=$(gh pr view ${{ github.event.issue.number }} \
+            --repo ${{ github.repository }} --json headRefName -q .headRefName)
+          echo "branch=$branch" >> $GITHUB_OUTPUT
 
       - name: Checkout PR branch
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.branch }}
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Fetch full history so we can commit and push
           fetch-depth: 0
 
       - name: Install endorctl
         run: |
-          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 -o endorctl
-          chmod +x endorctl
-          sudo mv endorctl /usr/local/bin/endorctl
+          curl -fsSL https://api.endorlabs.com/download/latest/endorctl_linux_amd64 \
+            -o endorctl && chmod +x endorctl && sudo mv endorctl /usr/local/bin/endorctl
 
       - name: Handle triage command
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ENDOR_NAMESPACE: "endor-solutions-tsaekao"
-          # Keyless auth: endorctl detects these automatically in GitHub Actions
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          ENDOR_GITHUB_ACTION_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          REPO: ${{ github.repository }}
-          COMMENT_BODY: ${{ github.event.comment.body }}
-          COMMENTER: ${{ github.event.comment.user.login }}
-        run: |
-          curl -fsSL \
-            https://raw.githubusercontent.com/tsaekao-endor/endor-pr-triage/main/scripts/handle_triage_command.py \
-            -o /tmp/handle_triage_command.py
-          python3 /tmp/handle_triage_command.py
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/handle_triage_command.py
