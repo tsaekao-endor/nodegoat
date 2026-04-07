@@ -64,6 +64,49 @@ def _run(cmd: list[str]) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+def _github_event() -> dict:
+    """Load the GitHub Actions event payload, or return an empty dict."""
+    path = os.environ.get("GITHUB_EVENT_PATH", "")
+    if not path:
+        return {}
+    try:
+        with open(path) as fh:
+            return json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _resolve(env_var: str, *fallbacks: str) -> str:
+    """Return the first non-empty value: explicit env var, then fallbacks."""
+    val = os.environ.get(env_var, "").strip()
+    if val:
+        return val
+    for fb in fallbacks:
+        if fb.strip():
+            return fb.strip()
+    return ""
+
+
+def _detect_pr_number() -> str:
+    """Detect the PR number from the GitHub Actions environment."""
+    event = _github_event()
+    pr_num = str(event.get("pull_request", {}).get("number", "")).strip()
+    if pr_num and pr_num != "0":
+        return pr_num
+    ref = os.environ.get("GITHUB_REF", "")
+    m = re.match(r"refs/pull/(\d+)/", ref)
+    if m:
+        return m.group(1)
+    return ""
+
+
+def _auth_flags() -> list[str]:
+    """Return endorctl auth flags for the current environment."""
+    if os.environ.get("GITHUB_ACTIONS") == "true":
+        return ["--enable-github-action-token"]
+    return []
+
+
 def fetch_project_uuid(namespace: str, repo: str) -> str:
     """Look up the Endor Labs project UUID from the GitHub repository name."""
     github_url = f"https://github.com/{repo}.git"
