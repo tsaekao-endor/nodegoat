@@ -6,6 +6,9 @@
   "main": "server.js",
   "dependencies": {
     "lodash": "4.17.4",
+    "axios": "0.18.0",
+    "minimist": "1.2.5",
+    "serialize-javascript": "1.7.0",
     "bcrypt-nodejs": "0.0.3",
     "body-parser": "^1.15.1",
     "consolidate": "^0.14.1",

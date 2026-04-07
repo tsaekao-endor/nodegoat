@@ -73,3 +73,24 @@ ignore:
     extra_key: GHSA-2rq5-699j-x7p6
     reason: risk-accepted
     comments: Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-8
+    username: tsaekao-endor@github
+    update_time: 2026-04-07 02:32:32 UTC
+    finding_name: 'GHSA-v8w9-2789-6hhr: Deserialization of Untrusted Data in bson'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://bson@1.0.9
+    vuln_id: GHSA-v8w9-2789-6hhr
+    extra_key: GHSA-v8w9-2789-6hhr
+    reason: false-positive
+    comments: Not reachable in prod — Triaged via PR comment by tsaekao-endor
+  - id: tsaekao-endor-9
+    username: tsaekao-endor@github
+    update_time: 2026-04-07 02:32:46 UTC
+    finding_name: 'GHSA-8r6j-v8pm-fqw3: Code injection in fsevents'
+    parent_name: npm://owasp-nodejs-goat@1.3.0
+    dependency_name: npm://fsevents@1.2.9
+    vuln_id: GHSA-8r6j-v8pm-fqw3
+    extra_key: GHSA-8r6j-v8pm-fqw3
+    reason: risk-accepted
+    expire_if_fix_available: true
+    comments: Triaged via PR comment by tsaekao-endor

@@ -28,10 +28,9 @@ jobs:
             -o endorctl && chmod +x endorctl && sudo mv endorctl /usr/local/bin/endorctl
 
       - name: Endor Labs scan
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           endorctl scan \
+            --enable-github-action-token \
             --namespace=endor-solutions-tsaekao
 
   # ── PR scan with triage comment ───────────────────────────────────────────
@@ -58,11 +57,17 @@ jobs:
       - name: Endor Labs scan and post triage comment
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENDOR_NAMESPACE: "endor-solutions-tsaekao"
+          ENDOR_SCAN_RESULTS: "/tmp/endor-scan.json"
         run: |
           endorctl scan \
+            --enable-github-action-token \
             --pr \
             --pr-incremental \
             --enable-pr-comments \
-            --namespace=endor-solutions-tsaekao
+            --scm-token=${{ secrets.GITHUB_TOKEN }} \
+            --scm-pr-id=${{ github.event.pull_request.number }} \
+            --namespace=endor-solutions-tsaekao \
+            --output-type=json > /tmp/endor-scan.json || true
 
           python3 scripts/post_triage_comment.py

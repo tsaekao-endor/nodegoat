@@ -6,21 +6,17 @@ builds a sorted, linked table with a hidden UUID map, and posts it as a PR
 comment. Developers can reply with /endor fp or /endor accept-risk commands
 to triage findings without leaving the PR.
 
-Required:
-    ENDOR_NAMESPACE  - Your Endor Labs tenant namespace.
+Required environment variables:
+    ENDOR_NAMESPACE - Endor Labs tenant namespace
+    PR_NUMBER       - Pull request number
+    REPO            - GitHub repository in owner/repo format (e.g. org/repo)
+    GH_TOKEN        - GitHub token with pull-requests:write permission
 
-Everything else is auto-detected from the standard GitHub Actions environment
-(GITHUB_REPOSITORY, GITHUB_TOKEN, GITHUB_EVENT_PATH). Set the corresponding
-environment variable explicitly to override any auto-detected value:
-    GH_TOKEN           - GitHub token (defaults to GITHUB_TOKEN)
-    REPO               - owner/repo (defaults to GITHUB_REPOSITORY)
-    PR_NUMBER          - PR number (auto-detected from event payload or GITHUB_REF)
-    ENDOR_PROJECT_UUID - Project UUID (auto-detected from repo name via Endor API)
+Optional environment variables:
+    ENDOR_PROJECT_UUID - Endor Labs project UUID. If not set, auto-detected
+                         from REPO using the Endor Labs API.
 
-Authentication against Endor Labs:
-    GitHub Actions OIDC: automatic when GITHUB_ACTIONS=true (no secrets needed).
-    API key:             set ENDOR_API_KEY as a CI secret.
-    Key pair:            set ENDOR_KEYID and ENDOR_PRIVATE_KEY as CI secrets.
+The endorctl binary must be installed and authenticated before this script runs.
 """
 
 import json
@@ -33,6 +29,14 @@ import tempfile
 
 PLATFORM_URL = "https://app.endorlabs.com"
 
+
+SEVERITY_EMOJI = {
+    "FINDING_LEVEL_CRITICAL": "🔴",
+    "FINDING_LEVEL_HIGH": "🟠",
+    "FINDING_LEVEL_MEDIUM": "🟡",
+    "FINDING_LEVEL_LOW": "🔵",
+}
+
 SEVERITY_LABEL = {
     "FINDING_LEVEL_CRITICAL": "🔴&nbsp;Critical",
     "FINDING_LEVEL_HIGH": "🟠&nbsp;High",
@@ -40,6 +44,7 @@ SEVERITY_LABEL = {
     "FINDING_LEVEL_LOW": "🔵&nbsp;Low",
 }
 
+# Lower number = higher priority in sort
 SEVERITY_ORDER = {
     "FINDING_LEVEL_CRITICAL": 0,
     "FINDING_LEVEL_HIGH": 1,
@@ -49,10 +54,15 @@ SEVERITY_ORDER = {
 
 COMMENT_HEADER = "## :shield: Endor Labs — Triage Findings"
 
+# Matches a leading "GHSA-xxxx-xxxx-xxxx: " or "CVE-YYYY-NNNNN: " prefix
 _VULN_PREFIX_RE = re.compile(r"^((?:GHSA|CVE)-[\w-]+):\s*")
 
 
-# ── Environment helpers ───────────────────────────────────────────────────────
+def _run(cmd: list[str]) -> tuple[int, str, str]:
+    """Run a subprocess and return (returncode, stdout, stderr)."""
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    return result.returncode, result.stdout, result.stderr
+
 
 def _github_event() -> dict:
     """Load the GitHub Actions event payload, or return an empty dict."""
@@ -72,33 +82,22 @@ def _resolve(env_var: str, *fallbacks: str) -> str:
     if val:
         return val
     for fb in fallbacks:
-        fb = fb.strip()
-        if fb:
-            return fb
+        if fb.strip():
+            return fb.strip()
     return ""
 
 
 def _detect_pr_number() -> str:
     """Detect the PR number from the GitHub Actions environment."""
-    # From the pull_request event payload
     event = _github_event()
     pr_num = str(event.get("pull_request", {}).get("number", "")).strip()
-    if pr_num:
+    if pr_num and pr_num != "0":
         return pr_num
-    # From GITHUB_REF: refs/pull/123/merge
     ref = os.environ.get("GITHUB_REF", "")
     m = re.match(r"refs/pull/(\d+)/", ref)
     if m:
         return m.group(1)
     return ""
-
-
-# ── endorctl helpers ──────────────────────────────────────────────────────────
-
-def _run(cmd: list[str]) -> tuple[int, str, str]:
-    """Run a subprocess and return (returncode, stdout, stderr)."""
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    return result.returncode, result.stdout, result.stderr
 
 
 def _auth_flags() -> list[str]:
@@ -113,7 +112,7 @@ def fetch_project_uuid(namespace: str, repo: str) -> str:
     github_url = f"https://github.com/{repo}.git"
     cmd = [
         "endorctl", "api", "list",
-        *_auth_flags(),
+        "--enable-github-action-token",
         f"--namespace={namespace}",
         "--resource=Project",
         "--output-type=json",
@@ -128,7 +127,44 @@ def fetch_project_uuid(namespace: str, repo: str) -> str:
     except json.JSONDecodeError:
         return ""
     objects = data.get("list", {}).get("objects", [])
-    return objects[0].get("uuid", "") if objects else ""
+    if not objects:
+        return ""
+    return objects[0].get("uuid", "")
+
+
+def load_findings_from_scan_output(scan_results_path: str) -> list[dict]:
+    """Load findings from an endorctl scan --output-type=json file.
+
+    Reads blocking_findings and warning_findings from the scan output, which
+    contain only findings detected in the current scan run (CONTEXT_TYPE_CI_RUN).
+    This is more accurate than querying the API, which returns all historical
+    findings for the project regardless of whether they appeared in this PR.
+    """
+    try:
+        with open(scan_results_path) as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"Warning: unable to read scan results from {scan_results_path}: {exc}",
+              file=sys.stderr)
+        return []
+
+    findings = []
+    findings.extend(data.get("blocking_findings", []))
+    findings.extend(data.get("warning_findings", []))
+
+    # Deduplicate by UUID in case a finding appears in both lists
+    seen: set[str] = set()
+    unique = []
+    for f in findings:
+        uid = f.get("uuid", "")
+        if uid not in seen:
+            seen.add(uid)
+            unique.append(f)
+
+    print(f"Loaded {len(unique)} finding(s) from scan output "
+          f"({len(data.get('blocking_findings',[]))} blocking, "
+          f"{len(data.get('warning_findings',[]))} warning).")
+    return unique
 
 
 def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
@@ -140,7 +176,7 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
     )
     cmd = [
         "endorctl", "api", "list",
-        *_auth_flags(),
+        "--enable-github-action-token",
         f"--namespace={namespace}",
         "--resource=Finding",
         "--output-type=json",
@@ -159,7 +195,6 @@ def fetch_findings(namespace: str, project_uuid: str) -> list[dict]:
     return data.get("list", {}).get("objects", [])
 
 
-# ── URL helpers ───────────────────────────────────────────────────────────────
 
 def finding_url(namespace: str, finding_uuid: str) -> str:
     """Return the Endor Labs platform URL for a single finding."""
@@ -180,16 +215,17 @@ def advisory_url(vuln_id: str) -> str:
     return ""
 
 
-# ── Finding helpers ───────────────────────────────────────────────────────────
-
 def extract_vuln_id(obj: dict) -> str:
-    """Extract the vuln ID from the finding."""
+    """Extract the vuln ID from the finding, falling back to parsing the description."""
+    # Prefer the dedicated field
     vuln_id = obj.get("spec", {}).get("vuln_id", "").strip()
     if vuln_id:
         return vuln_id
+    # Also try extra_key which often holds the GHSA
     extra_key = obj.get("spec", {}).get("extra_key", "").strip()
     if extra_key and re.match(r"^(GHSA|CVE)-", extra_key):
         return extra_key
+    # Last resort: parse the leading "GHSA-xxxx: " out of description
     desc = obj.get("meta", {}).get("description", "")
     m = _VULN_PREFIX_RE.match(desc)
     if m:
@@ -201,6 +237,7 @@ def clean_description(description: str, vuln_id: str) -> str:
     """Strip the leading vuln-id prefix from a description if present."""
     if vuln_id and description.startswith(vuln_id + ": "):
         return description[len(vuln_id) + 2:]
+    # Strip any generic GHSA/CVE prefix even if we didn't match vuln_id
     m = _VULN_PREFIX_RE.match(description)
     if m:
         return description[m.end():]
@@ -215,14 +252,15 @@ def sort_key(obj: dict) -> tuple:
     return (rank, pkg.lower())
 
 
-# ── Comment builder ───────────────────────────────────────────────────────────
-
 def build_comment(
     findings: list[dict],
     namespace: str,
     project_uuid: str,
 ) -> tuple[str, dict]:
-    """Build the PR comment body and a number-to-UUID mapping."""
+    """Build the PR comment body and a number-to-UUID mapping.
+
+    Returns a tuple of (comment_body, uuid_map).
+    """
     uuid_map: dict[str, str] = {}
     lines: list[str] = []
 
@@ -230,7 +268,9 @@ def build_comment(
 
     lines.append(COMMENT_HEADER)
     lines.append("")
-    lines.append(f'<a href="{scan_link}" target="_blank">View PR scans on Endor Labs →</a>')
+    lines.append(
+        f'<a href="{scan_link}" target="_blank">View PR scans on Endor Labs →</a>'
+    )
     lines.append("")
     lines.append("Reply with a command to triage findings in bulk:")
     lines.append("")
@@ -258,7 +298,9 @@ def build_comment(
     lines.append("| Finding | Severity | Package | Vulnerability |")
     lines.append("|---------|----------|---------|---------------|")
 
-    for i, obj in enumerate(sorted(findings, key=sort_key), start=1):
+    sorted_findings = sorted(findings, key=sort_key)
+
+    for i, obj in enumerate(sorted_findings, start=1):
         uuid = obj.get("uuid", "")
         description = obj.get("meta", {}).get("description", "Unknown finding")
         level = obj.get("spec", {}).get("level", "")
@@ -267,18 +309,22 @@ def build_comment(
 
         uuid_map[str(i)] = uuid
         severity_cell = SEVERITY_LABEL.get(level, "⚪ Unknown")
+
         desc = clean_description(description, vuln_id).replace("|", "\\|")
         dep_cell = f"`{dep}`" if dep else "—"
 
+        # Finding number links to the Endor platform finding page (new tab)
         if uuid:
             f_url = finding_url(namespace, uuid)
             num_cell = f'<a href="{f_url}" target="_blank"><strong>{i}</strong></a>'
         else:
             num_cell = f"**{i}**"
 
+        # Vuln ID links to public advisory; combined with description in one cell
         adv_url = advisory_url(vuln_id) if vuln_id else ""
         if vuln_id and adv_url:
-            vuln_cell = f'<a href="{adv_url}" target="_blank">{vuln_id}</a> {desc}'
+            vuln_link = f'<a href="{adv_url}" target="_blank">{vuln_id}</a>'
+            vuln_cell = f"{vuln_link} {desc}"
         elif vuln_id:
             vuln_cell = f"`{vuln_id}` {desc}"
         else:
@@ -286,19 +332,19 @@ def build_comment(
 
         lines.append(f"| {num_cell} | {severity_cell} | {dep_cell} | {vuln_cell} |")
 
+    # Hidden machine-readable UUID map consumed by handle_triage_command.py
     lines.append("")
     lines.append(f"<!-- endor-findings-map\n{json.dumps(uuid_map)}\n-->")
 
     return "\n".join(lines), uuid_map
 
 
-# ── PR comment ────────────────────────────────────────────────────────────────
-
 def post_comment(pr_number: str, repo: str, body: str) -> None:
     """Post a comment on the pull request via the gh CLI."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as fh:
         fh.write(body)
         tmp_path = fh.name
+
     try:
         rc, _, stderr = _run(
             ["gh", "pr", "comment", pr_number, "--repo", repo, "--body-file", tmp_path]
@@ -309,8 +355,6 @@ def post_comment(pr_number: str, repo: str, body: str) -> None:
     finally:
         os.unlink(tmp_path)
 
-
-# ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
     """Entry point."""
@@ -332,20 +376,30 @@ def main() -> None:
     if gh_token:
         os.environ.setdefault("GH_TOKEN", gh_token)
 
-    project_uuid = _resolve("ENDOR_PROJECT_UUID", "")
-    if not project_uuid:
-        print(f"ENDOR_PROJECT_UUID not set — looking up project UUID for {repo}...")
-        project_uuid = fetch_project_uuid(namespace, repo)
+    # Prefer scan output file (accurate, PR-scoped) over API query (all project findings)
+    scan_results_path = os.environ.get("ENDOR_SCAN_RESULTS", "").strip()
+    if scan_results_path:
+        print(f"Reading findings from scan output: {scan_results_path}")
+        findings = load_findings_from_scan_output(scan_results_path)
+        # Use a placeholder project UUID for URL generation; extract from findings if possible
+        project_uuid = os.environ.get("ENDOR_PROJECT_UUID", "").strip()
+        if not project_uuid and findings:
+            project_uuid = findings[0].get("spec", {}).get("project_uuid", "")
         if not project_uuid:
-            print(
-                f"Error: unable to determine project UUID for {repo}. "
-                "Set ENDOR_PROJECT_UUID to skip auto-detection.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        print(f"Resolved project UUID: {project_uuid}")
+            project_uuid = _resolve("ENDOR_PROJECT_UUID", "")
+    else:
+        print("ENDOR_SCAN_RESULTS not set — querying Endor Labs API for findings.")
+        project_uuid = _resolve("ENDOR_PROJECT_UUID", "")
+        if not project_uuid:
+            print(f"Looking up project UUID for {repo}...")
+            project_uuid = fetch_project_uuid(namespace, repo)
+            if not project_uuid:
+                print(f"Error: unable to determine project UUID for {repo}.",
+                      file=sys.stderr)
+                sys.exit(1)
+            print(f"Resolved project UUID: {project_uuid}")
+        findings = fetch_findings(namespace, project_uuid)
 
-    findings = fetch_findings(namespace, project_uuid)
     if not findings:
         print("No CI-blocking or CI-warning findings. Skipping triage comment.")
         return
