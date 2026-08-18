@@ -60,6 +60,7 @@ jobs:
           ENDOR_NAMESPACE: "endor-solutions-tsaekao"
           ENDOR_SCAN_RESULTS: "/tmp/endor-scan.json"
         run: |
+          set +e
           endorctl scan \
             --enable-github-action-token \
             --pr \
@@ -68,6 +69,13 @@ jobs:
             --scm-token=${{ secrets.GITHUB_TOKEN }} \
             --scm-pr-id=${{ github.event.pull_request.number }} \
             --namespace=endor-solutions-tsaekao \
-            --output-type=json > /tmp/endor-scan.json || true
+            --output-type=json > /tmp/endor-scan.json
+          scan_exit=$?
+          set -e
 
           python3 scripts/post_triage_comment.py
+
+          # Surface the real scan verdict so this job's status reflects policy
+          # violations, instead of always reporting success. Required for a
+          # branch protection rule or repository ruleset to gate on this check.
+          exit $scan_exit
