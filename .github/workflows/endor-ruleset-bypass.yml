@@ -10,7 +10,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       issues: write
-      administration: write
       contents: read
 
     steps:
@@ -38,11 +37,16 @@ jobs:
           gh issue close "$ISSUE" --repo ${{ github.repository }}
           exit 1
 
+      # Repository rulesets are managed through repo "administration" rights,
+      # which the default GITHUB_TOKEN does not have (it is not one of the
+      # scopes the `permissions:` block can grant). RULESET_ADMIN_TOKEN is a
+      # PAT with admin rights on this repo, used only for the two ruleset
+      # API calls below; everything else uses the default token.
       - name: Look up the ruleset
         id: ruleset
         if: steps.parse.outputs.pr_number
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RULESET_ADMIN_TOKEN }}
         run: |
           id=$(gh api repos/${{ github.repository }}/rulesets --jq '.[] | select(.name=="require-endor-scan") | .id')
           if [ -z "$id" ]; then
@@ -53,12 +57,11 @@ jobs:
 
       - name: Disable the ruleset
         id: disable
+        if: steps.ruleset.outputs.id
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RULESET_ADMIN_TOKEN }}
           RULESET_ID: ${{ steps.ruleset.outputs.id }}
           MINUTES: ${{ steps.parse.outputs.minutes }}
-          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
-          ISSUE: ${{ github.event.issue.number }}
         run: |
           gh api repos/${{ github.repository }}/rulesets/$RULESET_ID \
             -X PUT -f enforcement=disabled > /dev/null
@@ -66,28 +69,47 @@ jobs:
           expiry=$(date -u -d "+${MINUTES} minutes" +"%Y-%m-%d %H:%M:%S UTC")
           echo "expiry=$expiry" >> "$GITHUB_OUTPUT"
 
-          gh issue comment "$ISSUE" --repo ${{ github.repository }} --body ":unlock: Ruleset \`require-endor-scan\` disabled for PR #$PR_NUMBER.
+      - name: Announce the bypass
+        if: steps.disable.outputs.expiry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+          PR_NUMBER: ${{ steps.parse.outputs.pr_number }}
+          MINUTES: ${{ steps.parse.outputs.minutes }}
+          EXPIRY: ${{ steps.disable.outputs.expiry }}
+          REQUESTER: ${{ github.event.issue.user.login }}
+        run: |
+          gh issue comment "$ISSUE" --repo ${{ github.repository }} --body "$(cat <<EOF
+          :unlock: Ruleset \`require-endor-scan\` disabled for PR #$PR_NUMBER.
 
-          - Requested by: @${{ github.event.issue.user.login }}
+          - Requested by: @$REQUESTER
           - Window: ${MINUTES} minute(s)
-          - Auto re-enable at: ${expiry}
-          - The underlying Endor finding(s) are **not** dismissed. They remain open and will block the next PR normally.
+          - Auto re-enable at: $EXPIRY
 
-          You can merge PR #$PR_NUMBER now."
+          The underlying Endor finding(s) are **not** dismissed. They remain open and will block the next PR normally. You can merge PR #$PR_NUMBER now.
+          EOF
+          )"
 
       - name: Wait for the bypass window
+        if: steps.disable.outputs.expiry
         env:
           MINUTES: ${{ steps.parse.outputs.minutes }}
         run: sleep $(( MINUTES * 60 ))
 
       - name: Re-enable the ruleset
+        if: steps.disable.outputs.expiry
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.RULESET_ADMIN_TOKEN }}
           RULESET_ID: ${{ steps.ruleset.outputs.id }}
-          ISSUE: ${{ github.event.issue.number }}
         run: |
           gh api repos/${{ github.repository }}/rulesets/$RULESET_ID \
             -X PUT -f enforcement=active > /dev/null
 
+      - name: Announce re-enable and close
+        if: steps.disable.outputs.expiry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: |
           gh issue comment "$ISSUE" --repo ${{ github.repository }} --body ":lock: Bypass window expired. Ruleset \`require-endor-scan\` is active again."
           gh issue close "$ISSUE" --repo ${{ github.repository }}
